@@ -1,0 +1,10 @@
+{
+    "full_name": "USER_1",
+    "title": "AI Research Analyst",
+    "email": "you@provenance.internal",
+    "chunk_size": 1000,
+    "chunk_overlap": 200,
+    "top_k": 8,
+    "theme": "Soft Dark",
+    "font_size": 14
+}
