@@ -16,10 +16,14 @@ from theme import apply_theme
 
 apply_theme()
 
+
 st.set_page_config(page_title="Chat", page_icon="💬", layout="wide")
 
 import os
 from dotenv import load_dotenv
+
+from evidence import run_evidence_verification
+from retrieval import hybrid_retrieve
 
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -141,23 +145,19 @@ if query:
                 embedder = load_embedder()
                 collection = client.get_collection(name=selected_doc)
 
-                start_retrieval = time.time()
-                query_embedding = embedder.encode(query).tolist()
-
                 from settings import load_settings as load_user_settings
                 user_settings = load_user_settings()
-                top_k_value = user_settings.get("top_k", 8)
+                top_k_value = user_settings.get("top_k", 5)
 
-                results = collection.query(
-                    query_embeddings=[query_embedding],
-                    n_results=top_k_value,
-                    include=["documents", "metadatas", "distances"]
+                start_retrieval = time.time()
+                chunks, metadatas = hybrid_retrieve(
+                    query,
+                    collection,
+                    embedder,
+                    top_k=top_k_value,
+                    candidate_k=15
                 )
-                
                 retrieval_time = (time.time() - start_retrieval) * 1000
-
-                chunks = results["documents"][0]
-                metadatas = results["metadatas"][0]
 
                 context_text = ""
                 sources = []
@@ -316,172 +316,22 @@ Your answer:"""
 
                 answer = response.choices[0].message.content
 
-                # === COMPLETE VERIFICATION SYSTEM (A + B + C) ===
-                import requests
-                import tldextract
-                from datetime import datetime
+                # === EVIDENCE VERIFICATION ENGINE ===
+                evidence_result = run_evidence_verification(answer, context_text, GROQ_API_KEY)
 
-                verification_result = "none"
-                verification_label = ""
-                trusted_info = []
-                verification_summary = []
+                trust_score = evidence_result["trust_score"]
+                summary = evidence_result["summary"]
+                claims = evidence_result["claims"]
 
-                # ========== OPTION A: URL TRUST SCORE ==========
-                def check_url_trust(url, context_text):
-                    score = 0
-                    checks = []
-
-                    try:
-                        response = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-                        
-                        if response.status_code == 200:
-                            score += 1
-                            checks.append("✅ URL opens successfully (HTTP 200)")
-                        else:
-                            checks.append(f"❌ URL returned HTTP {response.status_code}")
-                        
-                        if url.startswith("https://"):
-                            score += 1
-                            checks.append("✅ Uses secure HTTPS connection")
-                        else:
-                            checks.append("❌ Not using HTTPS")
-                        
-                        ext = tldextract.extract(url)
-                        domain = f"{ext.domain}.{ext.suffix}"
-                        
-                        trusted_domains = ["wikipedia.org", "gov", "edu", "bbc.com", "reuters.com", "nature.com", "science.org", "who.int", "un.org"]
-                        if any(domain.endswith(td) for td in trusted_domains):
-                            score += 1
-                            checks.append(f"✅ Domain '{domain}' is recognized as trustworthy")
-                        else:
-                            checks.append(f"⚠️ Domain '{domain}' not in known trusted list")
-                        
-                        if len(context_text) > 100:
-                            score += 1
-                            checks.append(f"✅ Content loaded ({len(context_text)} characters)")
-                        else:
-                            checks.append("⚠️ Very little content found")
-                        
-                        return score, checks
-                    except Exception as e:
-                        return 0, [f"❌ URL check failed: {e}"]
-
-                # ========== OPTION B: THIRD-PARTY THREAT CHECK ==========
-                def check_url_safety(url):
-                    safety_checks = []
-                    
-                    # Check 1: Google Safe Browsing style (using Google's API-free check)
-                    try:
-                        # Check if URL contains suspicious patterns
-                        suspicious_patterns = ["bit.ly", "tinyurl", "goo.gl", "ow.ly", "shorturl", "phish", "malware", "virus", "hack"]
-                        if any(pattern in url.lower() for pattern in suspicious_patterns):
-                            safety_checks.append("❌ URL contains suspicious keywords")
-                        else:
-                            safety_checks.append("✅ No suspicious keywords detected in URL")
-                    except Exception:
-                        pass
-                    
-                    # Check 2: Domain age approximation (via URL structure)
-                    try:
-                        ext = tldextract.extract(url)
-                        domain = f"{ext.domain}.{ext.suffix}"
-                        if domain in ["wikipedia.org", "google.com", "bbc.com", "reuters.com", "nature.com"]:
-                            safety_checks.append(f"✅ Domain '{domain}' is well-established (15+ years)")
-                        elif len(domain) > 3:
-                            safety_checks.append(f"⚠️ Domain '{domain}' age unknown without WHOIS lookup")
-                        else:
-                            safety_checks.append("⚠️ Domain name is unusually short")
-                    except Exception:
-                        pass
-                    
-                    # Check 3: IP-based URL detection
-                    try:
-                        import re
-                        ip_pattern = re.search(r'\d+\.\d+\.\d+\.\d+', url)
-                        if ip_pattern:
-                            safety_checks.append("❌ URL uses direct IP address (common in phishing)")
-                        else:
-                            safety_checks.append("✅ URL uses proper domain name")
-                    except Exception:
-                        pass
-                    
-                    return safety_checks
-
-                # ========== OPTION C: AI-BASED CONTENT VERIFICATION ==========
-                def ai_content_check(query, answer, context_text):
-                    ai_prompt = f"""You are a fact-checking AI. Analyze the following content for accuracy.
-
-QUESTION: {query}
-
-AI ANSWER:
-{answer[:500]}
-
-SOURCE CONTENT:
-{context_text[:800]}
-
-TASK:
-1. Does the AI answer accurately reflect the source content?
-2. Is the source content consistent with general knowledge?
-3. Are there any obvious factual errors or inconsistencies?
-4. Respond with:
-   - "CONTENT_OK" if everything seems accurate
-   - "CONTENT_SUSPICIOUS" if something seems wrong
-   - "CONTENT_MISMATCH" if answer doesn't match source
-5. Then provide a one-sentence explanation.
-"""
-                    try:
-                        content_response = groq_client.chat.completions.create(
-                            model="openai/gpt-oss-120b",
-                            messages=[{"role": "user", "content": ai_prompt}],
-                            temperature=0.1,
-                            max_tokens=100
-                        )
-                        return content_response.choices[0].message.content.strip()
-                    except Exception:
-                        return "AI_CHECK_SKIPPED"
-
-                # ========== RUN VERIFICATION ==========
-                if selected_doc.startswith("http"):
-                    # Option A: URL Trust Score
-                    url_score, url_checks = check_url_trust(selected_doc, context_text)
-                    verification_summary.append(f"URL Trust Score: {url_score}/4")
-                    trusted_info.extend(url_checks)
-                    
-                    # Option B: Third-Party Safety Check
-                    safety_checks = check_url_safety(selected_doc)
-                    trusted_info.extend(safety_checks)
-                    
-                    # Option C: AI Content Check
-                    ai_result = ai_content_check(query, answer, context_text)
-                    if ai_result:
-                        verification_summary.append(f"AI Content Check: {ai_result}")
-                    
-                    # Final Verdict
-                    if url_score >= 3 and "❌" not in " ".join(safety_checks):
-                        verification_result = "verified"
-                        verification_label = f"✅ VERIFIED (URL Trust: {url_score}/4)"
-                    elif url_score == 2:
-                        verification_result = "partial"
-                        verification_label = f"⚠️ PARTIALLY VERIFIED (URL Trust: {url_score}/4)"
-                    else:
-                        verification_result = "flagged"
-                        verification_label = f"❌ FLAGGED (URL Trust: {url_score}/4)"
-                
-                else:
-                    # For uploaded files
+                if trust_score >= 80:
                     verification_result = "verified"
-                    verification_label = "✅ VERIFIED (Answer grounded in uploaded document)"
-                    trusted_info.append(f"Document Check: Answer generated using {len(sources)} chunks from {selected_doc}")
-                    
-                    # Option C: AI Content Check for files too
-                    ai_result = ai_content_check(query, answer, context_text)
-                    if ai_result:
-                        verification_summary.append(f"AI Content Check: {ai_result}")
-                
-                # Combine all info
-                trusted_info_text = "\n".join(trusted_info)
-                if verification_summary:
-                    trusted_info_text += "\n\n" + "\n".join(verification_summary)
+                    verification_label = f"✅ VERIFIED (Trust Score: {trust_score}/100)"
+                elif trust_score >= 50:
+                    verification_result = "partial"
+                    verification_label = f"⚠️ PARTIALLY VERIFIED (Trust Score: {trust_score}/100)"
+                else:
+                    verification_result = "flagged"
+                    verification_label = f"❌ LOW CONFIDENCE (Trust Score: {trust_score}/100)"
 
                 log_query(query, answer, sources, retrieval_time, generation_time, verification_result)
 

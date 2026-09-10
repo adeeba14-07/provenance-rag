@@ -38,7 +38,7 @@ def log_document_upload(filename, chunks_count, source_type="file"):
     })
     save_stats(stats)
 
-def log_query(question, answer, sources, retrieval_ms, generation_ms, verification="none"):
+def log_query(question, answer, sources, retrieval_ms, generation_ms, verification="none", trust_score=0):
     stats = load_stats()
     stats["total_queries"] += 1
     stats["total_retrieval_time_ms"] += retrieval_ms
@@ -51,6 +51,12 @@ def log_query(question, answer, sources, retrieval_ms, generation_ms, verificati
     elif verification == "flagged":
         stats["verification_results"]["flagged"] += 1
 
+    # Initialize trust history if not present
+    if "trust_scores" not in stats:
+        stats["trust_scores"] = []
+
+    stats["trust_scores"].append(trust_score)
+
     stats["queries_history"].append({
         "question": question,
         "answer": answer[:500],
@@ -58,7 +64,8 @@ def log_query(question, answer, sources, retrieval_ms, generation_ms, verificati
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "retrieval_ms": round(retrieval_ms, 2),
         "generation_ms": round(generation_ms, 2),
-        "verification": verification
+        "verification": verification,
+        "trust_score": trust_score
     })
     save_stats(stats)
 
@@ -72,4 +79,11 @@ def get_average_generation_time():
     stats = load_stats()
     if stats["total_queries"] > 0:
         return round(stats["total_generation_time_ms"] / stats["total_queries"], 2)
+    return 0
+
+def get_average_trust_score():
+    stats = load_stats()
+    trust_scores = stats.get("trust_scores", [])
+    if trust_scores:
+        return int(sum(trust_scores) / len(trust_scores))
     return 0

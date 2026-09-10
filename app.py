@@ -1,5 +1,10 @@
 import streamlit as st
-from tracker import load_stats, get_average_retrieval_time, get_average_generation_time
+from tracker import (
+    load_stats,
+    get_average_retrieval_time,
+    get_average_generation_time,
+    get_average_trust_score
+)
 from settings import load_settings as load_user_settings
 
 st.set_page_config(
@@ -156,7 +161,7 @@ with col2:
     st.metric("Avg Generation Time", f"{get_average_generation_time()} ms")
 
 with col3:
-    st.metric("Verified Answers", stats["verification_results"]["verified"])
+    st.metric("Avg Trust Score", f"{get_average_trust_score()}/100")
 
 st.markdown("---")
 
