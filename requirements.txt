@@ -7,7 +7,6 @@ sentence-transformers
 pypdf
 docx2txt
 groq
-ollama
 requests
 beautifulsoup4
 wikipedia-api
@@ -16,3 +15,6 @@ pandas
 plotly
 tldextract
 python-dotenv
+rank-bm25
+scikit-learn
+numpy
