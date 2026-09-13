@@ -64,18 +64,21 @@ def reciprocal_rank_fusion(vector_docs, vector_metas, bm25_docs, bm25_metas, k=6
 
 
 def rerank(query, documents, metadatas, top_k=5):
-    """Rerank using a cross-encoder model."""
+    """Rerank using cross-encoder, but round scores for determinism."""
     if not documents:
         return [], []
 
+    from sentence_transformers import CrossEncoder
     model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
     pairs = [[query, doc] for doc in documents]
     scores = model.predict(pairs)
 
+    # Round to 3 decimals so tiny numerical differences don't change the order
+    rounded = [round(float(s), 3) for s in scores]
+
     ranked = sorted(
-        zip(documents, metadatas, scores),
-        key=lambda x: x[2],
-        reverse=True
+        zip(documents, metadatas, rounded),
+        key=lambda x: (-x[2], x[0])  # score descending, then text ascending for ties
     )[:top_k]
 
     return [r[0] for r in ranked], [r[1] for r in ranked]

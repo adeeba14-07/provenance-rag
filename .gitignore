@@ -1,7 +1,6 @@
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
 venv/
 .env
 chroma_db/
@@ -10,9 +9,8 @@ chroma_db/
 *.txt
 *.csv
 *.json
-!requirements.txt
-!settings.json
+!package.json
 .DS_Store
 .vscode/
 *.log
-.env
+!.env.example

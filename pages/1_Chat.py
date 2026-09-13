@@ -1,128 +1,145 @@
 import streamlit as st
 import time
 import os
+import re
 import chromadb
 from sentence_transformers import SentenceTransformer
 from groq import Groq
+from dotenv import load_dotenv
+
 from tracker import log_query
 from conversations import (
-    load_conversations,
-    create_new_chat,
-    save_message,
-    delete_chat,
-    get_all_chats_for_document
+    load_conversations, create_new_chat, save_message,
+    delete_chat, get_all_chats_for_document
 )
+from retrieval import hybrid_retrieve
+from verifier import verify_answer
 from theme import apply_theme
 
 apply_theme()
-
-
 st.set_page_config(page_title="Chat", page_icon="💬", layout="wide")
-
-import os
-from dotenv import load_dotenv
-
-from evidence import run_evidence_verification
-from retrieval import hybrid_retrieve
 
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
 
 @st.cache_resource
 def load_embedder():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
-# Initialize ChromaDB client
+
 client = chromadb.PersistentClient(path="./chroma_db")
 
-# Get all collections
 try:
     collections = client.list_collections()
     collection_names = [col.name for col in collections]
 except Exception:
     collection_names = []
 
-# ============================================
-# SIDEBAR - Document Selector + Chat History
-# ============================================
 with st.sidebar:
     st.markdown("## 📚 Documents")
-
     if collection_names:
-        selected_doc = st.selectbox(
-            "Choose document:",
-            collection_names,
-            key="selected_doc"
-        )
-    else:
-        st.warning("No documents found. Upload first.")
-        selected_doc = None
+        selected_doc = st.selectbox("Choose document:", collection_names, key="selected_doc")
+
+        # Reset chat when the document changes
+        if "last_selected_doc" not in st.session_state:
+            st.session_state.last_selected_doc = selected_doc
+        elif st.session_state.last_selected_doc != selected_doc:
+            st.session_state.last_selected_doc = selected_doc
+            st.session_state.messages = []
+            st.session_state.current_chat_id = None
 
     st.markdown("---")
-
     st.markdown("## 💬 Conversations")
 
     if selected_doc:
         if st.button("➕ New Chat", use_container_width=True):
-            new_chat_id = create_new_chat(selected_doc)
-            st.session_state.current_chat_id = new_chat_id
+            new_id = create_new_chat(selected_doc)
+            st.session_state.current_chat_id = new_id
             st.session_state.messages = []
             st.rerun()
 
         chat_ids = get_all_chats_for_document(selected_doc)
         if chat_ids:
             st.markdown(f"**{len(chat_ids)} saved conversation(s)**")
-
             for chat_id in reversed(chat_ids):
-                conversations = load_conversations()
-                chat_data = conversations.get(selected_doc, {}).get(chat_id, {})
+                convos = load_conversations()
+                chat_data = convos.get(selected_doc, {}).get(chat_id, {})
                 created = chat_data.get("created_at", "Unknown")
-                msg_count = len(chat_data.get("messages", []))
-
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    if st.button(f"💬 {created} ({msg_count} msgs)", key=f"load_{chat_id}", use_container_width=True):
+                count = len(chat_data.get("messages", []))
+                c1, c2 = st.columns([4, 1])
+                with c1:
+                    if st.button(f"💬 {created} ({count})", key=f"load_{chat_id}", use_container_width=True):
                         st.session_state.current_chat_id = chat_id
                         st.session_state.messages = chat_data.get("messages", [])
                         st.rerun()
-                with col2:
-                    if st.button("🗑️", key=f"del_{chat_id}", help="Delete this chat"):
+                with c2:
+                    if st.button("🗑️", key=f"del_{chat_id}"):
                         delete_chat(selected_doc, chat_id)
                         if st.session_state.get("current_chat_id") == chat_id:
                             st.session_state.current_chat_id = None
                             st.session_state.messages = []
                         st.rerun()
         else:
-            st.info("No conversations yet. Click 'New Chat' to start.")
+            st.info("No conversations yet.")
 
     st.markdown("---")
-
     if st.button("🗑️ Clear Current Chat", use_container_width=True):
         st.session_state.messages = []
         st.session_state.current_chat_id = None
         st.rerun()
 
-# ============================================
-# MAIN CHAT AREA
-# ============================================
 st.title("💬 Research Chat")
-
 if selected_doc:
     st.markdown(f"### Chatting with: `{selected_doc}`")
 else:
     st.markdown("### Upload a document to start chatting")
-
 st.markdown("---")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
-
 if "current_chat_id" not in st.session_state:
     st.session_state.current_chat_id = None
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"])
+
+        # Re-render verification and citations if this is an assistant message with data
+        if m["role"] == "assistant" and m.get("verification"):
+            st.markdown(f"**Verification:** {m['verification']}")
+
+            with st.expander("🔍 Evidence & Citations", expanded=False):
+                summary = m.get("summary", {})
+                claims = m.get("claims", [])
+                if summary.get("note"):
+                    st.info(f"ℹ️ {summary['note']}")
+                line = (f"**Coverage:** {summary.get('supported', 0)} supported, "
+                        f"{summary.get('partial', 0)} partial, "
+                        f"{summary.get('unsupported', 0)} unsupported "
+                        f"(out of {summary.get('total', 0)} verifiable claims)")
+                if summary.get("interpretations", 0) > 0:
+                    line += f" — {summary['interpretations']} interpretation(s) excluded"
+                st.markdown(line)
+                st.markdown("---")
+                for i, c in enumerate(claims):
+                    icon = "✅" if c["status"] == "SUPPORTED" else ("⚠️" if c["status"] == "PARTIAL" else "❌")
+                    badge = " 🧮" if c.get("type") == "CALCULATION" else (" 💭" if c.get("type") == "INTERPRETATION" else "")
+                    st.markdown(f"{icon} **Claim {i+1}**{badge}: {c['claim']}")
+                    st.markdown(f"   *{c.get('type', 'FACTUAL')} — {c['status']}*")
+                    if c.get("similarity"):
+                        st.markdown(f"   Similarity: {c['similarity']}")
+                    if c.get("reason"):
+                        st.markdown(f"   {c['reason']}")
+                    if c.get("citation"):
+                        cit = c["citation"]
+                        st.markdown(f"   📎 `{cit['source']}`, {cit['location']}, Chunk {cit['chunk']} ({cit['confidence']})")
+                    st.markdown("")
+
+            if m.get("sources"):
+                with st.expander("📚 Sources Used"):
+                    for s in m["sources"]:
+                        st.info(s)
 
 query = st.chat_input("Ask a question about the selected document...")
 
@@ -133,11 +150,10 @@ if query:
 
     if not selected_doc:
         with st.chat_message("assistant"):
-            st.error("No document selected. Please upload a document first.")
+            st.error("No document selected.")
     else:
         if st.session_state.current_chat_id is None:
             st.session_state.current_chat_id = create_new_chat(selected_doc)
-
         save_message(selected_doc, st.session_state.current_chat_id, "user", query)
 
         with st.chat_message("assistant"):
@@ -145,223 +161,217 @@ if query:
                 embedder = load_embedder()
                 collection = client.get_collection(name=selected_doc)
 
-                from settings import load_settings as load_user_settings
-                user_settings = load_user_settings()
-                top_k_value = user_settings.get("top_k", 5)
+                from settings import load_settings
+                us = load_settings()
+                top_k = us.get("top_k", 5)
 
-                start_retrieval = time.time()
-                chunks, metadatas = hybrid_retrieve(
-                    query,
-                    collection,
-                    embedder,
-                    top_k=top_k_value,
-                    candidate_k=15
-                )
-                retrieval_time = (time.time() - start_retrieval) * 1000
+                history = ""
+                for m in st.session_state.messages[-6:]:
+                    role = "User" if m["role"] == "user" else "Assistant"
+                    history += f"\n{role}: {m['content']}"
 
-                context_text = ""
-                sources = []
+                last_answer = ""
+                for m in reversed(st.session_state.messages):
+                    if m["role"] == "assistant" and len(m["content"]) > 50:
+                        last_answer = m["content"][:800]
+                        break
 
-                for i, chunk in enumerate(chunks):
-                    source = metadatas[i].get("source", "unknown")
-                    page = metadatas[i].get("page", "unknown")
-                    context_text += f"\n\n--- CHUNK {i+1} (Source: {source}, Page: {page}) ---\n{chunk}"
-                    sources.append(f"Chunk {i+1}: {source}, Page {page}")
+                # Rewrite ONLY for follow-ups
+                retrieval_query = query
+                q_lower = query.lower()
+                follow_markers = ["that", "it", "this", "the same", "in binary", "in french",
+                                  "as a table", "tell me more", "what about", "and what",
+                                  "explain that", "translate", "convert"]
+                looks_followup = (len(st.session_state.messages) > 1
+                                  and any(mk in q_lower for mk in follow_markers)
+                                  and len(query.split()) < 10)
 
-                conversation_history = ""
-                for msg in st.session_state.messages[-6:]:
-                    role = "User" if msg["role"] == "user" else "Assistant"
-                    conversation_history += f"\n{role}: {msg['content']}"
+                if looks_followup:
+                    rewrite_prompt = f"""Rewrite the user's latest question into a self-contained question using the previous answer.
 
-                                # Detect intent
-                intent = "GENERAL"
-                query_lower = query.lower()
+Previous answer:
+{last_answer}
 
-                if any(word in query_lower for word in ["real or fake", "is this real", "is this fake", "legit", "trustworthy", "can i trust", "phish", "scam", "verify this url", "safe to visit"]):
-                    intent = "VERIFY"
-                elif any(word in query_lower for word in ["summar", "what is this about", "overview", "briefly describe", "give me a summary"]):
-                    intent = "SUMMARIZE"
-                elif any(word in query_lower for word in ["compare", "difference", "versus", "vs"]):
-                    intent = "COMPARE"
-                elif any(word in query_lower for word in ["define", "meaning of", "what does", "explain"]):
-                    intent = "EXPLAIN"
-                elif any(word in query_lower for word in ["when", "where", "who", "which year", "what year", "how many", "how much"]):
-                    intent = "FACTUAL"
+Latest question: {query}
+
+Rules:
+- Include the specific topic from the previous answer.
+- If already standalone, return unchanged.
+- Return ONLY the rewritten question.
+
+Rewritten:"""
+                    try:
+                        gclient_rw = Groq(api_key=GROQ_API_KEY)
+                        rw = gclient_rw.chat.completions.create(
+                            model="openai/gpt-oss-120b",
+                            messages=[{"role": "user", "content": rewrite_prompt}],
+                            temperature=0.0, max_tokens=1500
+                        )
+                        raw = rw.choices[0].message.content.strip()
+                        raw = raw.strip('"').strip("'").strip("*").strip()
+                        if len(raw) >= 5 and "**" not in raw:
+                            retrieval_query = raw
+                    except Exception:
+                        pass
+
+                # Transformation requests skip retrieval
+                transform_kw = ["in binary", "in french", "in spanish", "in json",
+                                "as a table", "as json", "as csv", "in hex",
+                                "in morse", "summarize that", "one sentence"]
+                is_transform = any(kw in q_lower for kw in transform_kw)
+
+                if is_transform and last_answer:
+                    prompt = f"""The user wants a transformation of your previous answer.
+
+Previous answer:
+{last_answer}
+
+Request: {query}
+
+Apply the transformation. Output ONLY the transformed content."""
+                    chunks, metadatas = [], []
                 else:
-                    intent = "GENERAL"
+                    start = time.time()
+                    chunks, metadatas = hybrid_retrieve(retrieval_query, collection, embedder,
+                                                         top_k=top_k, candidate_k=15)
+                    retrieval_time = (time.time() - start) * 1000
 
-                # Build prompt based on intent
-                if intent == "VERIFY":
-                    prompt = f"""You are a URL and document verification specialist. Your ONLY job is to determine if a URL or document is trustworthy.
+                    context_text = ""
+                    sources = []
+                    for i, chunk in enumerate(chunks):
+                        src = metadatas[i].get("source", "unknown")
+                        loc = metadatas[i].get("location", "Section")
+                        context_text += f"\n\n--- CHUNK {i+1} ({src}, {loc}) ---\n{chunk}"
+                        sources.append(f"Chunk {i+1}: {src}, {loc}")
 
-SOURCE: {selected_doc}
+                    if looks_followup:
+                        prompt = f"""You are Provenance, a precise AI research assistant.
 
-QUESTION: {query}
+Recent conversation:
+{history}
 
-CONTENT EXCERPTS:
-{context_text[:1000]}
-
-VERIFICATION TASK:
-1. Check if the source URL is from a known trusted domain.
-2. Check if the URL uses HTTPS.
-3. Look for suspicious patterns in the URL (misspellings, unusual subdomains, IP addresses).
-4. Check if the content matches what would be expected from that source.
-5. Give a clear VERDICT: LEGITIMATE or SUSPICIOUS.
-
-Your response should be:
-- A clear verdict (LEGITIMATE or SUSPICIOUS)
-- 3-5 bullet points explaining WHY
-- A final trust recommendation
-
-DO NOT summarize the content. ONLY focus on trustworthiness."""
-
-                elif intent == "SUMMARIZE":
-                    prompt = f"""You are Provenance, a helpful AI research assistant.
-
-SOURCE: {selected_doc}
-
-QUESTION: {query}
-
-CONTENT EXCERPTS:
+Document excerpts from "{selected_doc}":
 {context_text}
 
-TASK: Provide a concise, well-structured summary of the document/URL based ONLY on the excerpts above.
-- Use headings and bullet points where appropriate.
-- Highlight key facts, dates, and figures.
-- End with the sources you used.
-
-Your summary:"""
-
-                elif intent == "COMPARE":
-                    prompt = f"""You are Provenance, a helpful AI research assistant.
-
-SOURCE: {selected_doc}
-
-QUESTION: {query}
-
-CONTENT EXCERPTS:
-{context_text}
-
-TASK: Compare the items mentioned in the user's question based ONLY on the excerpts above.
-- Clearly explain the similarities and differences.
-- Use a table or bullet points if helpful.
-- Cite which chunks you used.
-
-Your comparison:"""
-
-                elif intent == "EXPLAIN":
-                    prompt = f"""You are Provenance, a helpful AI research assistant.
-
-SOURCE: {selected_doc}
-
-QUESTION: {query}
-
-CONTENT EXCERPTS:
-{context_text}
-
-TASK: Explain the concept/term the user is asking about based ONLY on the excerpts above.
-- Give a clear definition first.
-- Then provide details and examples from the document.
-- Cite your sources.
-
-Your explanation:"""
-
-                elif intent == "FACTUAL":
-                    prompt = f"""You are Provenance, a helpful AI research assistant.
-
-SOURCE: {selected_doc}
-
-QUESTION: {query}
-
-CONTENT EXCERPTS:
-{context_text}
-
-TASK: Answer the user's factual question based ONLY on the excerpts above.
-- Be direct and precise.
-- Include specific dates, numbers, and facts where available.
-- Cite your sources.
-
-Your answer:"""
-
-                else:
-                    prompt = f"""You are Provenance, a helpful AI research assistant. You have access to a document called "{selected_doc}".
-
-Here is the recent conversation history:
-{conversation_history}
-
-Here are relevant excerpts from the document:
-{context_text}
-
-The user's current question is: {query}
+User question: {retrieval_query}
 
 Instructions:
-1. Answer the user's question based on the document excerpts above.
-2. If the exact answer is not in the excerpts, use whatever related information IS there to give a helpful response.
-3. If the excerpts are completely unrelated, say "I don't have enough information in this document to answer that question."
-4. Be conversational and natural, like ChatGPT.
-5. If the user is asking a follow-up question, use the conversation history to understand what they mean.
-6. Mention which document chunks you used in your answer.
+1. The user is asking a follow-up. Use the recent conversation to understand what "that" or "it" refers to.
+2. Answer using ONLY the document excerpts above.
+3. If the excerpts are unrelated, say exactly: "The document does not contain information about this."
+4. Be direct. Use bullet points or tables when helpful.
+5. If the excerpts do not contain the information, say: "The document does not contain information about this."
+6. Write factual answers as complete sentences. Do NOT output bare lists like "2018, 2019" — write "The data covers the years 2018 and 2019." 
+7. Do NOT use LaTeX math notation. Write formulas in plain text like "SMAPE = (1/n) * sum(abs(actual - predicted) / ((abs(actual) + abs(predicted)) / 2)) * 100".
+
+Your answer:"""
+                    else:
+                        prompt = f"""You are Provenance, a precise AI research assistant.
+
+Document excerpts from "{selected_doc}":
+{context_text}
+
+User question: {retrieval_query}
+
+Instructions:
+1. This is a new question. Do NOT refer to or continue any previous answer.
+2. Answer using ONLY the document excerpts above.
+3. If the excerpts are unrelated, say exactly: "The document does not contain information about this."
+4. Be direct. Use bullet points or tables when helpful.
+5. Preserve exact numbers, dates, and names.
+6. Do not invent facts.
+7. If the excerpts do not contain the information, say: "The document does not contain information about this."
+8. Write factual answers as complete sentences. Do NOT output bare lists like "2018, 2019" — write "The data covers the years 2018 and 2019." 
+9. Do NOT use LaTeX math notation. Write formulas in plain text like "SMAPE = (1/n) * sum(abs(actual - predicted) / ((abs(actual) + abs(predicted)) / 2)) * 100".
+
 
 Your answer:"""
 
-                start_generation = time.time()
-                groq_client = Groq(api_key=GROQ_API_KEY)
-                response = groq_client.chat.completions.create(
+                start = time.time()
+                gclient = Groq(api_key=GROQ_API_KEY)
+                resp = gclient.chat.completions.create(
                     model="openai/gpt-oss-120b",
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=0.7,
-                    max_tokens=1500
+                    temperature=0.0, max_tokens=1500
                 )
-                generation_time = (time.time() - start_generation) * 1000
+                generation_time = (time.time() - start) * 1000
+                answer = resp.choices[0].message.content
 
-                answer = response.choices[0].message.content
+                answer = re.sub(r'\[svg\]\([^\)]+\)', '', answer)
+                answer = re.sub(r'\[.*?\]\(http://localhost:8501[^\)]*\)', '', answer)
+                answer = re.sub(r'http://localhost:8501[^\s]*', '', answer)
+                answer = re.sub(r'\n\s*\n\s*\n+', '\n\n', answer).strip()
 
-                # === EVIDENCE VERIFICATION ENGINE ===
-                evidence_result = run_evidence_verification(answer, context_text, GROQ_API_KEY)
-
-                trust_score = evidence_result["trust_score"]
-                summary = evidence_result["summary"]
-                claims = evidence_result["claims"]
-
-                if trust_score >= 80:
-                    verification_result = "verified"
-                    verification_label = f"✅ VERIFIED (Trust Score: {trust_score}/100)"
-                elif trust_score >= 50:
-                    verification_result = "partial"
-                    verification_label = f"⚠️ PARTIALLY VERIFIED (Trust Score: {trust_score}/100)"
+                # Verify only if we retrieved chunks
+                if chunks:
+                    result = verify_answer(answer, chunks, metadatas, GROQ_API_KEY, retrieval_query)
+                    trust = result["trust_score"]
+                    summary = result["summary"]
+                    claims = result["claims"]
                 else:
-                    verification_result = "flagged"
-                    verification_label = f"❌ LOW CONFIDENCE (Trust Score: {trust_score}/100)"
+                    trust = 100
+                    summary = {"supported": 0, "partial": 0, "unsupported": 0,
+                               "total": 0, "interpretations": 0,
+                               "note": "Transformation request — no verification needed"}
+                    claims = []
 
-                log_query(query, answer, sources, retrieval_time, generation_time, verification_result)
+                if trust >= 85:
+                    v_result, v_label = "verified", f"✅ VERIFIED ({trust}/100)"
+                elif trust >= 60:
+                    v_result, v_label = "partial", f"⚠️ MOSTLY VERIFIED ({trust}/100)"
+                elif trust >= 30:
+                    v_result, v_label = "partial", f"🟡 PARTIALLY VERIFIED ({trust}/100)"
+                else:
+                    v_result, v_label = "flagged", f"❌ LOW CONFIDENCE ({trust}/100)"
+
+                log_query(query, answer, sources if chunks else [],
+                          retrieval_time if chunks else 0,
+                          generation_time, v_result, trust, chunks if chunks else [])
 
                 st.markdown(answer)
+                st.markdown(f"**Verification:** {v_label}")
 
-                # Only show verification for VERIFY intent
-                if intent == "VERIFY":
-                    if verification_label:
-                        st.markdown(f"**Verification:** {verification_label}")
+                with st.expander("🔍 Evidence & Citations", expanded=False):
+                    if summary.get("note"):
+                        st.info(f"ℹ️ {summary['note']}")
+                    line = (f"**Coverage:** {summary['supported']} supported, "
+                            f"{summary['partial']} partial, {summary['unsupported']} unsupported "
+                            f"(out of {summary['total']} verifiable claims)")
+                    if summary.get("interpretations", 0) > 0:
+                        line += f" — {summary['interpretations']} interpretation(s) excluded"
+                    st.markdown(line)
+                    st.markdown("---")
+                    for i, c in enumerate(claims):
+                        icon = "✅" if c["status"] == "SUPPORTED" else ("⚠️" if c["status"] == "PARTIAL" else "❌")
+                        badge = " 🧮" if c["type"] == "CALCULATION" else (" 💭" if c["type"] == "INTERPRETATION" else "")
+                        st.markdown(f"{icon} **Claim {i+1}**{badge}: {c['claim']}")
+                        st.markdown(f"   *{c['type']} — {c['status']}*")
+                        st.markdown(f"   {c['reason']}")
+                        if c.get("citation"):
+                            cit = c["citation"]
+                            st.markdown(f"   📎 `{cit['source']}`, {cit['location']}, Chunk {cit['chunk']} ({cit['confidence']})")
+                        st.markdown("")
 
-                    if trusted_info:
-                        with st.expander("🔍 Verification Details"):
-                            st.markdown(trusted_info[:800])
+                if chunks:
+                    with st.expander("📚 Sources Used"):
+                        for s in sources:
+                            st.info(s)
 
-                # Always show sources for all intents
-                with st.expander("📚 Sources Used"):
-                    for s in sources:
-                        st.info(s)
+                export = f"Q: {query}\n\nA:\n{answer}\n\nSOURCES:\n"
+                for s in sources if chunks else []:
+                    export += f"- {s}\n"
+                st.download_button("📥 Download Answer", export.encode("utf-8"),
+                                   file_name="provenance_answer.txt", mime="text/plain")
 
-                # Export Answer Button
-                export_text = f"QUESTION: {query}\n\nANSWER:\n{answer}\n\nSOURCES:\n"
-                for s in sources:
-                    export_text += f"- {s}\n"
-
-                st.download_button(
-                    label="📥 Download This Answer",
-                    data=export_text.encode("utf-8"),
-                    file_name="provenance_answer.txt",
-                    mime="text/plain"
-                )
-
-                st.session_state.messages.append({"role": "assistant", "content": answer})
+                                # Save the full message with verification metadata
+                message_data = {
+                    "role": "assistant",
+                    "content": answer,
+                    "verification": v_label,
+                    "trust_score": trust,
+                    "summary": summary,
+                    "claims": claims,
+                    "sources": sources if chunks else []
+                }
+                st.session_state.messages.append(message_data)
                 save_message(selected_doc, st.session_state.current_chat_id, "assistant", answer)
