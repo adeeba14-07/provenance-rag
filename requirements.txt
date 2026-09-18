@@ -18,3 +18,4 @@ python-dotenv
 rank-bm25
 scikit-learn
 numpy
+plotly
