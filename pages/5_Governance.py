@@ -2,14 +2,15 @@ import streamlit as st
 from tracker import load_stats
 from conversations import load_conversations
 from settings import load_settings, save_settings
-from theme import apply_theme
+from theme import apply_theme, render_navigation, render_page_header, render_top_bar
 
 apply_theme()
+render_navigation("pages/5_Governance.py")
+render_top_bar("Workspace Governance")
 
-st.set_page_config(page_title="Governance", page_icon="⚙️", layout="wide")
+st.set_page_config(page_title="Governance", page_icon="⌘", layout="wide")
 
-st.title("⚙️ Workspace Governance")
-st.markdown("### Profile and pipeline configuration")
+render_page_header("Workspace governance", "Profile and controls", "Tune the research workspace while keeping the retrieval pipeline explicit and inspectable.")
 
 # Load current settings
 settings = load_settings()
@@ -26,14 +27,14 @@ for doc, chats in conversations.items():
 col1, col2 = st.columns([1, 2])
 
 with col1:
-    st.markdown("### 👤 Profile")
+    st.markdown("### Profile")
     
     full_name = st.text_input("Full Name", value=settings.get("full_name", ""))
     title = st.text_input("Professional Title", value=settings.get("title", ""))
     email = st.text_input("Email", value=settings.get("email", ""))
 
 with col2:
-    st.markdown("### 📊 Real Usage Stats")
+    st.markdown("### Real Usage Stats")
 
     m1, m2, m3, m4 = st.columns(4)
 
@@ -54,7 +55,7 @@ st.markdown("---")
 # ============================================
 # RAG PIPELINE CONFIGURATION
 # ============================================
-st.markdown("### 🔧 RAG Pipeline Configuration")
+st.markdown("### RAG Pipeline Configuration")
 
 col1, col2, col3 = st.columns(3)
 
@@ -90,15 +91,15 @@ st.markdown("---")
 # ============================================
 # INTERFACE CUSTOMIZATION
 # ============================================
-st.markdown("### 🎨 Interface Customization")
+st.markdown("### Interface Customization")
 
 col1, col2 = st.columns(2)
 
 with col1:
     theme = st.radio(
         "Workspace Theme",
-        ["Soft Dark", "Cool Light", "Warm Sepia"],
-        index=["Soft Dark", "Cool Light", "Warm Sepia"].index(settings.get("theme", "Soft Dark"))
+        ["Soft Dark", "Warm Sepia"],
+        index=["Soft Dark", "Warm Sepia"].index(settings.get("theme", "Soft Dark"))
     )
 
 with col2:
@@ -115,7 +116,7 @@ st.markdown("---")
 # ============================================
 # PREVIEW PANE
 # ============================================
-st.markdown("### 👁️ Preview")
+st.markdown("### Preview")
 
 preview_text = "The appellate court's interpretation of Chevron deference in this context significantly limits agency discretion when determining statutory ambiguity."
 st.markdown(f'<p style="font-size:{font_size}px; color:#94A3B8;">{preview_text}</p>', unsafe_allow_html=True)
@@ -125,7 +126,7 @@ st.markdown("---")
 # ============================================
 # SAVE BUTTON
 # ============================================
-if st.button("💾 Save All Changes", use_container_width=True):
+if st.button(" Save All Changes", use_container_width=True):
     # Update settings
     settings["full_name"] = full_name
     settings["title"] = title
@@ -135,7 +136,9 @@ if st.button("💾 Save All Changes", use_container_width=True):
     settings["top_k"] = top_k
     settings["theme"] = theme
     settings["font_size"] = font_size
+    save_settings(settings)
+    st.session_state.governance_saved = True
 
-save_settings(settings)
-st.success("✅ Settings saved successfully!")
-st.rerun()
+if st.session_state.get("governance_saved"):
+    st.success("[OK] Settings saved successfully!")
+    del st.session_state["governance_saved"]

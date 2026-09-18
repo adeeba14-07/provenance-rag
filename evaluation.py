@@ -1,5 +1,4 @@
 import os
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from groq import Groq
 from dotenv import load_dotenv
@@ -11,6 +10,7 @@ _embedder_cache = None
 def get_embedder():
     global _embedder_cache
     if _embedder_cache is None:
+        from sentence_transformers import SentenceTransformer
         _embedder_cache = SentenceTransformer("all-MiniLM-L6-v2")
     return _embedder_cache
 

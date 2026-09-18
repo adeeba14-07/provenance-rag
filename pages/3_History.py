@@ -1,14 +1,15 @@
 import streamlit as st
 import pandas as pd
 from tracker import load_stats
-from theme import apply_theme
+from theme import apply_theme, render_navigation, render_page_header, render_top_bar
 
 apply_theme()
+render_navigation("pages/3_History.py")
+render_top_bar("Audit Trail")
 
-st.set_page_config(page_title="History", page_icon="🕐", layout="wide")
+st.set_page_config(page_title="History", page_icon="◷", layout="wide")
 
-st.title("🕐 Audit Trail")
-st.markdown("### Your actual query history")
+render_page_header("Workspace history", "Audit trail", "Review questions, answers, latency, and the sources that shaped each response.")
 
 stats = load_stats()
 
@@ -20,7 +21,7 @@ if stats["queries_history"]:
         df = pd.DataFrame(stats["queries_history"])
         csv_data = df.to_csv(index=False).encode("utf-8")
         st.download_button(
-            label="📥 Download CSV",
+            label="↓ Download CSV",
             data=csv_data,
             file_name="provenance_history.csv",
             mime="text/csv"
@@ -30,7 +31,7 @@ if stats["queries_history"]:
         import json
         json_data = json.dumps(stats["queries_history"], indent=4).encode("utf-8")
         st.download_button(
-            label="📥 Download JSON",
+            label="↓ Download JSON",
             data=json_data,
             file_name="provenance_history.json",
             mime="application/json"

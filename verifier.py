@@ -1,17 +1,14 @@
 import re
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from statistics import mean, median
+from functools import lru_cache
 
-_embedder = None
 
-
+@lru_cache(maxsize=1)
 def get_embedder():
     """Load the embedding model once and reuse it."""
-    global _embedder
-    if _embedder is None:
-        _embedder = SentenceTransformer("all-MiniLM-L6-v2")
-    return _embedder
+    from sentence_transformers import SentenceTransformer
+    return SentenceTransformer("all-MiniLM-L6-v2")
 
 
 # ============================================

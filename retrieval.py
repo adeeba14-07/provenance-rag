@@ -1,6 +1,15 @@
 from rank_bm25 import BM25Okapi
-from sentence_transformers import CrossEncoder
+from functools import lru_cache
 import re
+
+
+@lru_cache(maxsize=1)
+def get_reranker():
+    from sentence_transformers import CrossEncoder
+    return CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+
+_bm25_cache = {}
 
 
 def tokenize(text):
@@ -68,8 +77,7 @@ def rerank(query, documents, metadatas, top_k=5):
     if not documents:
         return [], []
 
-    from sentence_transformers import CrossEncoder
-    model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    model = get_reranker()
     pairs = [[query, doc] for doc in documents]
     scores = model.predict(pairs)
 
@@ -89,14 +97,35 @@ def hybrid_retrieve(query, collection, embedder, top_k=5, candidate_k=15):
     # Step 1: Vector search
     vector_docs, vector_metas = vector_search(query, collection, embedder, top_k=candidate_k)
 
-    # Step 2: Get all docs for BM25 from the same collection
-    all_data = collection.get(include=["documents", "metadatas"])
-    all_docs = all_data["documents"]
-    all_metas = all_data["metadatas"]
+    # Step 2: Build BM25 once per collection version instead of once per query.
+    collection_key = collection.name
+    collection_size = collection.count()
+    cached = _bm25_cache.get(collection_key)
+    if cached is None or cached["size"] != collection_size:
+        all_data = collection.get(include=["documents", "metadatas"])
+        all_docs = all_data["documents"]
+        all_metas = all_data["metadatas"]
+        _bm25_cache[collection_key] = {
+            "size": collection_size,
+            "index": BM25Okapi([tokenize(doc) for doc in all_docs]) if all_docs else None,
+            "docs": all_docs,
+            "metas": all_metas,
+        }
+    else:
+        all_docs = cached["docs"]
+        all_metas = cached["metas"]
 
     # Step 3: BM25 search
     if all_docs:
-        bm25_docs, bm25_metas = bm25_search(query, all_docs, all_metas, top_k=candidate_k)
+        tokenized_query = tokenize(query)
+        scores = cached["index"].get_scores(tokenized_query) if cached else _bm25_cache[collection_key]["index"].get_scores(tokenized_query)
+        ranked = sorted(
+            zip(all_docs, all_metas, scores),
+            key=lambda item: item[2],
+            reverse=True,
+        )[:candidate_k]
+        bm25_docs = [item[0] for item in ranked]
+        bm25_metas = [item[1] for item in ranked]
     else:
         bm25_docs, bm25_metas = [], []
 

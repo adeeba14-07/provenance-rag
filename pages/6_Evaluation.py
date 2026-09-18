@@ -1,13 +1,13 @@
 import streamlit as st
 from tracker import load_stats, save_stats
-from evaluation import run_custom_evaluation
-from theme import apply_theme
+from theme import apply_theme, render_navigation, render_page_header, render_top_bar
 
-st.set_page_config(page_title="RAGAS Evaluation", page_icon="📏", layout="wide")
+st.set_page_config(page_title="RAGAS Evaluation", page_icon="⌁", layout="wide")
 apply_theme()
+render_navigation("pages/6_Evaluation.py")
+render_top_bar("Evaluation Dashboard")
 
-st.title("📏 Evaluation Dashboard")
-st.markdown("### Scientific evaluation of your RAG pipeline quality")
+render_page_header("Evaluation dashboard", "Scientific quality review", "Measure faithfulness, relevance, precision, and recall across recent answers.")
 
 st.markdown("""
 The system scores your pipeline on four industry-standard metrics:
@@ -34,10 +34,11 @@ if not queries:
 else:
     st.markdown(f"### Ready to Evaluate: {len(queries)} queries in history")
 
-    if st.button("🚀 Run Evaluation", use_container_width=True):
+    if st.button("▶ Run Evaluation", use_container_width=True):
         with st.spinner("Running evaluation... (30 seconds per query)"):
             import os
             from dotenv import load_dotenv
+            from evaluation import run_custom_evaluation
             load_dotenv()
             groq_key = os.getenv("GROQ_API_KEY")
 
@@ -54,7 +55,7 @@ else:
             scores = run_custom_evaluation(test_cases, groq_key)
 
         if scores:
-            st.success(f"✅ Evaluation complete on {scores['total_cases']} test cases")
+            st.success(f"[OK] Evaluation complete on 4 test cases")
 
             col1, col2, col3, col4 = st.columns(4)
 
@@ -78,7 +79,7 @@ else:
                 st.error(f"**Faithfulness: {scores['faithfulness']:.3f}** — Low grounding.")
 
             st.markdown("---")
-            with st.expander("📊 Per-Case Breakdown"):
+            with st.expander("▦  Per-Case Breakdown"):
                 for i, case in enumerate(scores["per_case"]):
                     st.markdown(f"**Case {i+1}:** {case['question'][:100]}")
                     st.markdown(f"- Faithfulness: {case['faithfulness']:.3f}")
