@@ -159,7 +159,6 @@ def render_navigation(active_page):
             else:
                 st.page_link(page_path, label=f"{icon}  {label}")
                 
-        st.caption("SYSTEM ONLINE")
 
         # ============================================
         # USER ACCOUNT (shown on every page)
