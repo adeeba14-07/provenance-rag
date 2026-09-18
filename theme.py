@@ -158,8 +158,23 @@ def render_navigation(active_page):
                 )
             else:
                 st.page_link(page_path, label=f"{icon}  {label}")
-        st.divider()
+                
         st.caption("SYSTEM ONLINE")
+
+        # ============================================
+        # USER ACCOUNT (shown on every page)
+        # ============================================
+        try:
+            from auth import current_user, logout_user
+            user = current_user()
+            if user:
+                st.divider()
+                st.markdown(f"**Logged in as:** `{user}`")
+                if st.button("🚪 Log Out", use_container_width=True, key="sidebar_logout"):
+                    logout_user()
+                    st.rerun()
+        except ImportError:
+            pass
 
 
 def render_page_header(title, eyebrow, description):

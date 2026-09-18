@@ -1,5 +1,7 @@
 import streamlit as st
 
+from auth import render_login_page, current_user, logout_user
+
 st.set_page_config(
     page_title="Provenance RAG",
     page_icon="◈",
@@ -38,6 +40,9 @@ from tracker import (
 )
 from theme import apply_theme, render_navigation, render_page_header, render_top_bar
 
+# Authentication gate — nothing below this runs until the user logs in.
+if not render_login_page():
+    st.stop()
 
 apply_theme()
 
@@ -51,7 +56,8 @@ with st.sidebar:
     st.markdown("**Vector DB:** ChromaDB")
     st.markdown("---")
     st.markdown(f"**Last Updated:** {stats['last_updated'] or 'Never'}")
-
+    
+    
 # Main Page
 render_top_bar("Workspace")
 render_page_header("Provenance RAG", "Workspace overview", "A grounded research environment for ingesting, questioning, and auditing documents.")

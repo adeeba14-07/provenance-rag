@@ -3,6 +3,11 @@ from tracker import load_stats
 from conversations import load_conversations
 from settings import load_settings, save_settings
 from theme import apply_theme, render_navigation, render_page_header, render_top_bar
+from auth import current_user, get_user_profile, save_user_profile
+
+if not current_user():
+    st.warning("Please log in first.")
+    st.stop()
 
 apply_theme()
 render_navigation("pages/5_Governance.py")
@@ -16,6 +21,7 @@ render_page_header("Workspace governance", "Profile and controls", "Tune the res
 settings = load_settings()
 stats = load_stats()
 conversations = load_conversations()
+user_profile = get_user_profile(current_user())
 
 total_chats = 0
 for doc, chats in conversations.items():
@@ -28,10 +34,11 @@ col1, col2 = st.columns([1, 2])
 
 with col1:
     st.markdown("### Profile")
+    st.caption(f"Logged in as `{current_user()}`")
     
-    full_name = st.text_input("Full Name", value=settings.get("full_name", ""))
-    title = st.text_input("Professional Title", value=settings.get("title", ""))
-    email = st.text_input("Email", value=settings.get("email", ""))
+    full_name = st.text_input("Full Name", value=user_profile.get("full_name", ""))
+    title = st.text_input("Professional Title", value=user_profile.get("title", ""))
+    email = st.text_input("Email", value=user_profile.get("email", ""))
 
 with col2:
     st.markdown("### Real Usage Stats")
@@ -127,10 +134,10 @@ st.markdown("---")
 # SAVE BUTTON
 # ============================================
 if st.button(" Save All Changes", use_container_width=True):
-    # Update settings
-    settings["full_name"] = full_name
-    settings["title"] = title
-    settings["email"] = email
+    # Profile: saved per-user (in session, never shared)
+    save_user_profile(current_user(), full_name, email, title)
+
+    # Pipeline settings: global (shared, non-personal)
     settings["chunk_size"] = chunk_size
     settings["chunk_overlap"] = chunk_overlap
     settings["top_k"] = top_k
