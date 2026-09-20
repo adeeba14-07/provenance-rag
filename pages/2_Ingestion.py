@@ -266,7 +266,13 @@ if collection_names:
             except Exception as e:
                 st.error(f"Failed to delete: {e}")
         vector_query = st.text_input("Search vectors by metadata", placeholder="Search chunks...")
-        collection = client.get_collection(selected_collection)
+        try:
+            collection = client.get_collection(selected_collection)
+        except Exception:
+            collection_names = [c.name for c in client.list_collections()]
+            if selected_collection in collection_names:
+                st.warning(f"Collection '{selected_collection}' changed. Refresh the page.")
+            st.stop()
         vector_data = collection.get(include=["documents", "metadatas", "embeddings"])
         embeddings = vector_data.get("embeddings")
         if embeddings is None:
