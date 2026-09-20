@@ -258,6 +258,13 @@ if collection_names:
     explorer_column, details_column = st.columns([1, 2], gap="large")
     with explorer_column:
         selected_collection = st.selectbox("Document collection", collection_names)
+        if st.button("🗑️ Delete this collection", key="delete_collection_btn"):
+            try:
+                client.delete_collection(name=selected_collection)
+                st.success(f"Deleted '{selected_collection}'. Refreshing...")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to delete: {e}")
         vector_query = st.text_input("Search vectors by metadata", placeholder="Search chunks...")
         collection = client.get_collection(selected_collection)
         vector_data = collection.get(include=["documents", "metadatas", "embeddings"])
