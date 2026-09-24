@@ -168,7 +168,7 @@ render_page_header(
 st.markdown("### Upload Documents")
 upload_header, ocr_column = st.columns([3, 1])
 with upload_header:
-    st.caption("Supported formats: PDF, DOCX, TXT, CSV • Up to 200MB per file")
+        st.caption("Supported formats: PDF, DOCX, TXT, CSV • Up to 200MB per file only (Due to Streamlit Cloud memory limit)")
 with ocr_column:
     advanced_ocr = st.toggle("Advanced OCR", value=True, help="Reserved for OCR-enabled document extraction.")
 
