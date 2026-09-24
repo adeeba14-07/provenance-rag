@@ -61,11 +61,27 @@ def create_user(username, email, password):
     return True, "Account created. Please log in."
 
 
+# Hardcoded fallback users — survive Streamlit Cloud redeploys
+FALLBACK_USERS = {
+    "bob": {"password": "password123", "email": "bob123@gmail.com"},
+    "admin": {"password": "admin123", "email": "admin@provenance.internal"},
+    "demo": {"password": "demo123", "email": "demo@provenance.internal"},
+}
+
+
 def authenticate(username, password):
     """Check username and password. Returns (success, email)."""
     username = username.strip().lower()
+
+    # 1. Try the hardcoded fallback first — always works
+    if username in FALLBACK_USERS:
+        if password == FALLBACK_USERS[username]["password"]:
+            return True, FALLBACK_USERS[username]["email"]
+        else:
+            return False, None
+
+    # 2. Fall back to SQLite for user-created accounts
     conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
     c.execute("SELECT password_hash, email FROM users WHERE username = ?", (username,))
     row = c.fetchone()
     conn.close()

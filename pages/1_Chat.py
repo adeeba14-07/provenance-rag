@@ -502,11 +502,65 @@ Your answer:"""
                         for s in sources:
                             st.info(s)
 
-                export = f"Q: {query}\n\nA:\n{answer}\n\nSOURCES:\n"
-                for s in sources if chunks else []:
-                    export += f"- {s}\n"
-                st.download_button("↓ Download Answer", export.encode("utf-8"),
-                                   file_name="provenance_answer.txt", mime="text/plain")
+                                # ---- Enhanced export with full evidence ----
+                export_lines = [
+                    "=" * 70,
+                    "PROVENANCE RAG — ANSWER EXPORT",
+                    "=" * 70,
+                    f"Generated: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    f"Document: {selected_doc}",
+                    "",
+                    "-" * 70,
+                    "QUESTION",
+                    "-" * 70,
+                    query,
+                    "",
+                    "-" * 70,
+                    "ANSWER",
+                    "-" * 70,
+                    answer,
+                    "",
+                    "-" * 70,
+                    "VERIFICATION",
+                    "-" * 70,
+                    f"Status: {v_label}",
+                    f"Trust score: {trust}/100",
+                    f"Coverage: {summary.get('supported', 0)} supported, {summary.get('partial', 0)} partial, {summary.get('unsupported', 0)} unsupported (out of {summary.get('total', 0)})",
+                    "",
+                ]
+
+                if claims:
+                    export_lines.append("-" * 70)
+                    export_lines.append("CLAIM-BY-CLAIM VERIFICATION")
+                    export_lines.append("-" * 70)
+                    for i, c in enumerate(claims):
+                        export_lines.append(f"\n[Claim {i+1}] {c.get('claim', '')}")
+                        export_lines.append(f"  Type: {c.get('type', 'FACTUAL')}")
+                        export_lines.append(f"  Status: {c.get('status', 'UNKNOWN')}")
+                        if c.get("reason"):
+                            export_lines.append(f"  Reason: {c['reason']}")
+                        if c.get("citation"):
+                            cit = c["citation"]
+                            export_lines.append(f"  Source: {cit.get('source', '')}, {cit.get('location', '')}, Chunk {cit.get('chunk', '')} ({cit.get('confidence', '')})")
+                    export_lines.append("")
+
+                if sources:
+                    export_lines.append("-" * 70)
+                    export_lines.append("SOURCES USED")
+                    export_lines.append("-" * 70)
+                    for s in sources:
+                        export_lines.append(f"  • {s}")
+                    export_lines.append("")
+
+                export_lines.append("=" * 70)
+                export_lines.append("END OF EXPORT")
+                export_lines.append("=" * 70)
+
+                export = "\n".join(export_lines)
+                fname = f"provenance_answer_{__import__('datetime').datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                st.download_button("↓ Download Full Answer (with evidence + sources)",
+                                   export.encode("utf-8"),
+                                   file_name=fname, mime="text/plain")
 
                 # Save the full message with verification metadata
                 message_data = {
