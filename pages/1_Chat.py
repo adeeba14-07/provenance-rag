@@ -119,6 +119,32 @@ st.markdown(
             border-color: #1a3717 !important;
             color: #ffffff !important;
         }
+
+                /* Fix table overflow — keep tables inside chat column */
+        [data-testid="stChatMessage"] table {
+            width: 100% !important;
+            max-width: 100% !important;
+            display: block !important;
+            overflow-x: auto !important;
+            font-size: 0.82rem !important;
+            border-collapse: collapse;
+            white-space: nowrap;
+        }
+        [data-testid="stChatMessage"] table th,
+        [data-testid="stChatMessage"] table td {
+            padding: 4px 8px !important;
+            border: 1px solid #d5d5cd !important;
+            color: #1a1c19 !important;
+        }
+        [data-testid="stChatMessage"] table th {
+            background: #f0f0e8 !important;
+            font-weight: 700 !important;
+        }
+        [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
+            max-width: 100% !important;
+            overflow-x: hidden;
+        }
+    </style>
         [data-testid="stChatMessage"][data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stMarkdownContainer"] p {
             color: #ffffff !important;
         }
@@ -274,6 +300,16 @@ with chat_column:
                     with st.expander("▣ Sources Used"):
                         for s in m["sources"]:
                             st.info(s)
+
+                if m.get("export_text"):
+                    fname = f"provenance_answer_{m.get('trust_score', 0)}_{abs(hash(m['content'])) % 10000}.txt"
+                    st.download_button(
+                        "↓ Download Full Answer (with evidence + sources)",
+                        m["export_text"].encode("utf-8"),
+                        file_name=fname,
+                        mime="text/plain",
+                        key=f"download_{abs(hash(m['content']))}",
+                    )
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="chat-input-row">', unsafe_allow_html=True)
@@ -556,13 +592,43 @@ Your answer:"""
                 export_lines.append("END OF EXPORT")
                 export_lines.append("=" * 70)
 
-                export = "\n".join(export_lines)
-                fname = f"provenance_answer_{__import__('datetime').datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-                st.download_button("↓ Download Full Answer (with evidence + sources)",
-                                   export.encode("utf-8"),
-                                   file_name=fname, mime="text/plain")
+                                # Build the export text and save it WITH the message
+                export_lines = [
+                    "=" * 70,
+                    "PROVENANCE RAG — ANSWER EXPORT",
+                    "=" * 70,
+                    f"Generated: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    f"Document: {selected_doc}",
+                    "",
+                    "-" * 70, "QUESTION", "-" * 70, query,
+                    "", "-" * 70, "ANSWER", "-" * 70, answer,
+                    "", "-" * 70, "VERIFICATION", "-" * 70,
+                    f"Status: {v_label}",
+                    f"Trust score: {trust}/100",
+                    f"Coverage: {summary.get('supported', 0)} supported, {summary.get('partial', 0)} partial, {summary.get('unsupported', 0)} unsupported (out of {summary.get('total', 0)})",
+                    "",
+                ]
+                if claims:
+                    export_lines += ["-" * 70, "CLAIM-BY-CLAIM VERIFICATION", "-" * 70]
+                    for i, c in enumerate(claims):
+                        export_lines.append(f"\n[Claim {i+1}] {c.get('claim', '')}")
+                        export_lines.append(f"  Type: {c.get('type', 'FACTUAL')}")
+                        export_lines.append(f"  Status: {c.get('status', 'UNKNOWN')}")
+                        if c.get("reason"):
+                            export_lines.append(f"  Reason: {c['reason']}")
+                        if c.get("citation"):
+                            cit = c["citation"]
+                            export_lines.append(f"  Source: {cit.get('source', '')}, {cit.get('location', '')}, Chunk {cit.get('chunk', '')} ({cit.get('confidence', '')})")
+                    export_lines.append("")
+                if sources:
+                    export_lines += ["-" * 70, "SOURCES USED", "-" * 70]
+                    for s in sources:
+                        export_lines.append(f"  • {s}")
+                    export_lines.append("")
+                export_lines += ["=" * 70, "END OF EXPORT", "=" * 70]
+                export_text = "\n".join(export_lines)
 
-                # Save the full message with verification metadata
+                # Save the full message with verification metadata AND export text
                 message_data = {
                     "role": "assistant",
                     "content": answer,
@@ -572,6 +638,7 @@ Your answer:"""
                     "claims": claims,
                     "sources": sources if chunks else [],
                     "raw_chunks": chunks if chunks else [],
+                    "export_text": export_text,
                 }
                 st.session_state.messages.append(message_data)
                 save_message(selected_doc, st.session_state.current_chat_id, "assistant", answer)
