@@ -82,6 +82,7 @@ def authenticate(username, password):
 
     # 2. Fall back to SQLite for user-created accounts
     conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
     c.execute("SELECT password_hash, email FROM users WHERE username = ?", (username,))
     row = c.fetchone()
     conn.close()

@@ -145,10 +145,6 @@ st.markdown(
             overflow-x: hidden;
         }
     </style>
-        [data-testid="stChatMessage"][data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stMarkdownContainer"] p {
-            color: #ffffff !important;
-        }
-    </style>
     """,
     unsafe_allow_html=True,
 )
